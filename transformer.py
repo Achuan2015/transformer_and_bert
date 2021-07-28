@@ -3,6 +3,7 @@
 """
 
 import torch
+from torch._C import uint8
 import torch.nn as nn
 import numpy as np
 
@@ -80,6 +81,24 @@ class MultiHeadAttention(nn.Module):
         return output, attention
 
 
+class LayerNorm(nn.Module):
+    """
+    layer normalization 的实现
+    """
+    
+    def __init__(self, model_dim=512, eps=1e-6):
+        super(LayerNorm, self).__init__()
+        # 构造Layer normalization的参数
+        self.a_2 = nn.Parameter(torch.ones(model_dim))
+        self.b_2 = nn.Parameter(torch.zeros(model_dim))
+        # 除以标准差时的平滑值
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return  self.a_2 * (x - mean) / (std + self.eps) + self.b_2
+
 def padding_mask(seq_q, seq_k):
     """
     （1）选择q，k是因为 k，v的来源总是一致的，因此seq_k 与 seq_v 任意选择就好了
@@ -93,9 +112,52 @@ def padding_mask(seq_q, seq_k):
     return pad_mask
 
 def sequence_mask(seq):
-    pass
+    """
+    构造 序列mask，将序列mask应用在每一个序列上。
+
+    param:
+        seq: -> B * L
+    """
+    batch_size, seq_len = seq.size()
+    mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
+    mask = mask.unsqueeze(0).expand(batch_size, -1, -1)  # [B, L, L]
+    return mask.eq(0)
 
 
+class PositionalEmbedding(nn.Module):
+    
+    def __init__(self, model_dim, max_seq_len):
+        super(PositionalEmbedding, self).__init__()
+        # 根据公式，构造PE矩阵 w_k * t (t 为 pos， w_k)
+        position_encoding = [[pos / np.power(10000, 2 * (j // 2)/model_dim) for j in range(model_dim)] for pos in range(max_seq_len)]
+        # 根据公式：奇数列使用余弦（cos），偶数列使用（sim）
+        position_encoding[:, 0::2] = np.sim(position_encoding[:, 0::2])
+        position_encoding[:, 1::2] = np.cos(position_encoding[:, 1::2])
+        # padding的位置需要单独配置
+        pad_row = torch.zeros(1, model_dim)
+        position_encoding = torch.cat((pad_row, position_encoding), 0)
+        # 构造不可学习的position embedding 参数（这里的posiiton embedding 是绝对位置编码）
+        # 总长度是：max_seq_len + 1
+        self.position_embedding = nn.Embedding(max_seq_len + 1, model_dim)
+        self.position_embedding.weight = nn.Parameter(position_encoding, requires_grad=False)
+    
+    def forward(self, input_len):
+        """
+        输入序列，得到对应的位置的 position embedding
+        """
+        # 找到 input_len 中最大的数（意味着长度）
+        max_len = torch.max(input_len)
+        # 确定tensor 类型
+        tensor = torch.cuda.LongTensor if input_len.is_cuda else  torch.LongTensor
+        input_pos = tensor(
+           [list(range(1, 1 + seq) + [0] * max_len - seq) for seq in input_len]
+        )
+        return self.position_embedding(input_pos)
+
+class PositionalWiseFeedForward(nn.Module):
+
+    def __init__(self, model_dim=512, ffn_dim=2048, dropout=0.0):
+        super(PositionalEmbedding, self).__init__()
 
 
 if __name__ == "__main__":
