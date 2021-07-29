@@ -3,9 +3,10 @@
 """
 
 import torch
-from torch._C import uint8
 import torch.nn as nn
 import numpy as np
+import torch.nn.functional as F
+from torch.nn.modules import padding
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -35,6 +36,9 @@ class ScaledDotProductAttention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
+    """
+    multi-head layer module
+    """
 
     def __init__(self, model_dim=512, num_heads=8, dropout=0.0):
         super(MultiHeadAttention, self).__init__()
@@ -95,8 +99,9 @@ class LayerNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
+        # x -> B * L * D
+        mean = x.mean(-1, keepdim=True) # mean -> B * L * 1
+        std = x.std(-1, keepdim=True) # std -> B * L * 1
         return  self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
 def padding_mask(seq_q, seq_k):
@@ -158,6 +163,148 @@ class PositionalWiseFeedForward(nn.Module):
 
     def __init__(self, model_dim=512, ffn_dim=2048, dropout=0.0):
         super(PositionalEmbedding, self).__init__()
+        self.w_1 = nn.Linear(model_dim, ffn_dim)
+        self.w_2 = nn.Linear(ffn_dim, model_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.layer_nrom = LayerNorm(model_dim)
+    
+    def forward(self, x):
+        w1_output = F.relu(self.w_1(x))
+        w1_output = self.dropout(w1_output)
+        w2_output = self.w_2(w1_output)
+        # add residual and norm layer
+        output= self.layer_nrom(x + w2_output)
+        return output
+
+"""
+上面是实现Transformer的一些子模块，现在开始Transformer模型的构建，encoder端和decoder端都分别有6层，实现如下：
+"""
+
+class EncoderLayer(nn.Module):
+    """单层EncoderLayer
+    """
+
+    def __init__(self, model_dim=512, num_heads=8, ffn_dim=2048, dropout=0.0):
+        """
+        Encoder的一层
+        """
+        super(EncoderLayer, self).__init__()
+        self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
+        self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
+    
+    def forward(self, inputs, attn_mask=None):
+        # multi-head attention attention
+        context, attention = self.attention(inputs, inputs, inputs, attn_mask)
+        # feed forward 
+        output = self.feed_forward(context)
+        return output, attention
+
+
+class EmbeddingLayer(nn.Module):
+    
+    def __init__(self, vocab_size, max_seq_len, model_dim):
+        super(EmbeddingLayer, self).__init__()
+        self.seq_embedding = nn.Embedding(vocab_size + 1, model_dim, padding_idx=0)
+        self.position_embedding = PositionalEmbedding(model_dim, max_seq_len)
+    
+    def forward(self, inputs, inputs_len):
+        output = self.seq_embedding(inputs)
+        output += self.position_embedding(inputs_len)
+        return output
+        
+
+class Encoder(nn.Module):
+    """
+    Encoder 由一层 EmbeddingLayer 和 6层 EncoderLayer组成
+    """
+    def __init__(self, 
+                vocab_size,
+                max_seq_len,
+                num_layers=6,
+                model_dim=512,
+                num_heads=8,
+                ffn_dim=2048,
+                dropout=0.1
+            ):
+        super(Encoder, self).__init__()
+        self.encoder_layers = nn.ModuleList(EncoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers))
+        self.encoder_embedding = EmbeddingLayer(vocab_size, max_seq_len, model_dim)
+
+    def forward(self, inputs, inputs_len):
+        output = self.encoder_embedding(inputs, inputs_len)
+        self_attention_mask = padding_mask(inputs, inputs)
+        attentions = []
+        for encoder in self.encoder_layers:
+            output, attention = encoder(output, self_attention_mask)
+            attentions.append(attention)
+        return output, attentions
+
+class DecoderLayer(nn.Module):
+
+    def __init__(self, model_dim=512, num_heads=8, ffn_dim=2048, dropout=0.0):
+        super(DecoderLayer, self).__init__()
+        self.attention = MultiHeadAttention(model_dim, num_heads, dropout)
+        self.feed_forward = PositionalWiseFeedForward(model_dim, ffn_dim, dropout)
+
+    def forward(self, decoder_inputs, encoder_outputs, self_attn_mask=None, context_attn_mask=None):
+        # self-attention, all inputs from decoder inputs
+        dec_output, self_attention = self.attention(decoder_inputs, decoder_inputs, decoder_inputs, self_attn_mask)
+        # context attention, key, value from encoder outputs, query from encoder outputs
+        dec_output, context_attention = self.attention(encoder_outputs, encoder_outputs, dec_output, context_attn_mask)
+        # decoder's output
+        dec_output = self.feed_forward(dec_output)
+        return dec_output, self_attention, context_attention
+
+class Decoder(nn.Module):
+
+    def __init__(self, vocab_size, max_seq_len, num_layers=6, model_dim=512, num_heads=8, ffn_dim=2048, dropout=0.0):
+        super(Decoder, self).__init__()
+        self.decoder_layers = nn.ModuleList([DecoderLayer(model_dim, num_heads, ffn_dim, dropout) for _ in range(num_layers)])
+        self.decoder_embedding = EmbeddingLayer(vocab_size, max_seq_len, model_dim)
+    
+    def forward(self, inputs, input_len, encoder_outputs, context_attn_mask=None):
+        output = self.decoder_embedding(inputs, input_len)
+        self_attn_mask = padding_mask(inputs, inputs)
+        seq_mask = sequence_mask(inputs)
+        context_attn_mask = torch.gt(self_attn_mask + seq_mask, 0)
+
+        self_attentions = []
+        context_attentions = []
+        for decoder in self.decoder_layers:
+            dec_output, self_attention, context_attention = decoder(output, encoder_outputs, self_attn_mask, context_attn_mask)
+            self_attentions.append(self_attention)
+            context_attentions.append(context_attention)
+        return dec_output, self_attentions, context_attentions
+
+
+class Transformers(nn.Module):
+
+    def __init__(self,
+                src_vocab_size,
+                src_max_len,
+                tgt_vocab_size,
+                tgt_max_len,
+                num_layers=6,
+                model_dim=512,
+                num_heads=6,
+                ffn_dim=2048,
+                dropout=0.0):
+        super(Transformers, self).__init__()
+        self.encoder = Encoder(src_vocab_size, src_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
+        self.decoder = Decoder(tgt_vocab_size, tgt_max_len, num_layers, model_dim, num_heads, ffn_dim, dropout)
+
+        self.linear = nn.Linear(model_dim, tgt_vocab_size, bias=False)
+        self.softmax = nn.Softmax(dim=2)
+    
+    def forward(self, src_seq, src_len, tgt_seq, tgt_len):
+        context_attn_mask = padding_mask(tgt_seq, src_seq)
+        
+        enc_output, enc_self_attn = self.encoder(src_seq, src_len)
+        dec_output, self_attentions, context_attentions = self.decoder(tgt_seq, tgt_len, enc_output, context_attn_mask)
+
+        output = self.linear(dec_output)
+        output = self.softmax(output)
+        return output, enc_self_attn, self_attentions, context_attentions
 
 
 if __name__ == "__main__":
@@ -172,3 +319,4 @@ if __name__ == "__main__":
     # multi_head_attention = MultiHeadAttention(dropout=0.1)
     # output, attention = multi_head_attention(query, query, query)
     # print(output.shape, attention.shape)
+    pass
