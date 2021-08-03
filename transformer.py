@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
-from torch.nn.modules import padding
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -126,7 +125,7 @@ def sequence_mask(seq):
     batch_size, seq_len = seq.size()
     mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.uint8), diagonal=1)
     mask = mask.unsqueeze(0).expand(batch_size, -1, -1)  # [B, L, L]
-    return mask.eq(0)
+    return mask
 
 
 class PositionalEmbedding(nn.Module):
@@ -153,7 +152,7 @@ class PositionalEmbedding(nn.Module):
         # 找到 input_len 中最大的数（意味着长度）
         max_len = torch.max(input_len)
         # 确定tensor 类型
-        tensor = torch.cuda.LongTensor if input_len.is_cuda else  torch.LongTensor
+        tensor = torch.cuda.LongTensor if input_len.is_cuda else torch.LongTensor
         input_pos = tensor(
            [list(range(1, 1 + seq) + [0] * max_len - seq) for seq in input_len]
         )
@@ -266,6 +265,7 @@ class Decoder(nn.Module):
         output = self.decoder_embedding(inputs, input_len)
         self_attn_mask = padding_mask(inputs, inputs)
         seq_mask = sequence_mask(inputs)
+        # 注意这里 self_attn_mask 与 seq_mask 中需要mask的位置的value 为1， torch.gt 使得对应位置都变成True，感觉用 `> 0` 也是一样的。 
         context_attn_mask = torch.gt(self_attn_mask + seq_mask, 0)
 
         self_attentions = []
