@@ -266,7 +266,7 @@ class Decoder(nn.Module):
         self_attn_mask = padding_mask(inputs, inputs)
         seq_mask = sequence_mask(inputs)
         # 注意这里 self_attn_mask 与 seq_mask 中需要mask的位置的value 为1， torch.gt 使得对应位置都变成True，感觉用 `> 0` 也是一样的。 
-        context_attn_mask = torch.gt(self_attn_mask + seq_mask, 0)
+        self_attn_mask = torch.gt(self_attn_mask + seq_mask, 0)
 
         self_attentions = []
         context_attentions = []
