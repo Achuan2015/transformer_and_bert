@@ -271,7 +271,7 @@ class Decoder(nn.Module):
         self_attentions = []
         context_attentions = []
         for decoder in self.decoder_layers:
-            dec_output, self_attention, context_attention = decoder(output, encoder_outputs, self_attn_mask, context_attn_mask)
+            output, self_attention, context_attention = decoder(output, encoder_outputs, self_attn_mask, context_attn_mask)
             self_attentions.append(self_attention)
             context_attentions.append(context_attention)
         return dec_output, self_attentions, context_attentions

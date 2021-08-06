@@ -102,7 +102,7 @@ def test_Decoder():
     tensor = torch.cuda.LongTensor if torch.cuda.is_available() else torch.LongTensor
     inputs = tensor([[1,2,3,3,4,0], [12,3,3,4,5,7], [10, 11, 21, 21,11, 0]])
     inputs_len = torch.Tensor([5, 6, 5])
-    enc_output = torch.randn(3, 6, model_dim)
+    enc_output = torch.randn(3, 8, model_dim)
     func = Decoder(vocab_size, max_seq_len, model_dim)
     output, _, _ = func(inputs, inputs_len, enc_output)
     assert output.shape == (3, 6, model_dim)
@@ -110,8 +110,8 @@ def test_Decoder():
 
 def test_Transformer():
     tensor = torch.cuda.LongTensor if torch.cuda.is_available() else torch.LongTensor
-    src_inputs = tensor([[1,2,3,3,4,0], [12,3,3,4,5,7], [10, 11, 21, 21,11, 0]])
-    src_inputs_len = torch.Tensor([5, 6, 5])
+    src_inputs = tensor([[1,2,3,3,4,0,0,0], [12,3,3,4,5,7,1,3], [10, 11, 21, 21,11, 0,0,0]])
+    src_inputs_len = torch.Tensor([5, 8, 5])
     target_inputs = tensor([[1,2,3,3,4,0], [12,3,3,4,5,7], [10, 11, 21, 21,11, 0]])
     target_inputs_len = torch.Tensor([5, 6, 5])
     model = Transformer(vocab_size, max_seq_len, model_dim, num_heads, num_layers, ffn_dim, dropout)

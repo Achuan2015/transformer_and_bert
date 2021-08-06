@@ -196,7 +196,7 @@ class DecoderLayer(nn.Module):
         # mask multi-head attention module
         dec_output, self_attention = self.attention(decoder_input, decoder_input, decoder_input, self_attn_mask)
         # context multi-head attention module
-        dec_output, context_attention = self.attention(dec_output, dec_output, encoder_output, context_attn_mask)
+        dec_output, context_attention = self.attention(encoder_output, encoder_output, dec_output, context_attn_mask)
         # feed forward module
         output = self.feed_forward(dec_output)
         return output, self_attention, context_attention
