@@ -5,7 +5,7 @@ import math
 # padding mask
 def padding_mask(seq_q, seq_k):
     batch_szie, q_len = seq_q.size()
-    mask = seq_k.eq(0)
+    mask = seq_k.data.eq(0)
     mask = mask.unsqueeze(1).expand(-1, q_len, -1)
     return mask
 
@@ -37,9 +37,9 @@ class ScaledDotProductAttention(nn.Module):
         self.model_dim = model_dim
         self.softmax = nn.Softmax(dim = -1)
 
-    def forward(self, q, k, v, attn_mask):
+    def forward(self, q, k, v, attn_mask=None):
         scores = torch.matmul(q, k.transpose(-2, -1))/ math.sqrt(self.model_dim)
-        if attn_mask:
+        if attn_mask is not None:
             scores = scores.masked_fill_(attn_mask, -1e-9)
         attention = self.softmax(scores)
         context = torch.matmul(attention, v)
@@ -66,7 +66,7 @@ class MultiHeadAttention(nn.Module):
         K = self.linear_k(key).view(batch_size, -1, self.heads_num, self.per_head_dim).transpose(1, 2)
         V = self.linear_v(value).view(batch_size, -1, self.heads_num, self.per_head_dim).transpose(1, 2)
         
-        if attn_mask:
+        if attn_mask is not None:
             attn_mask = attn_mask.unsqueeze(1).repeat(1, self.heads_num, 1, 1)
         context, attention = self.scaled_dot_product_attention(Q, K, V, attn_mask)
         
@@ -99,7 +99,7 @@ class EncoderLayer(nn.Module):
         self.feed_forward = PositionWiseFeedForward(model_dim, ffn_dim)
     
     def forward(self, encoder_inputs, attn_mask=None):
-        encoder_output, _ = self.attention(encoder_inputs, attn_mask)
+        encoder_output, _ = self.attention(encoder_inputs, encoder_inputs, encoder_inputs, attn_mask)
         encoder_output = self.feed_forward(encoder_output)
         return encoder_output
 
@@ -117,9 +117,9 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
-class BertForMLMPreditionHead(nn.Moduel):
+class BertForMLMPreditionHead(nn.Module):
     
-    def __init__(self, vocab_size, model_dim=768):
+    def __init__(self,model_dim=768):
         super(BertForMLMPreditionHead, self).__init__()
         self.dense = nn.Linear(model_dim, model_dim)
         self.activation = gelu
@@ -138,8 +138,8 @@ class BERT(nn.Module):
         super(BERT, self).__init__()
         self.embedding = Embedding(vocab_size, max_seq_len, model_dim)
         self.encoder_layers = nn.ModuleList([EncoderLayer(model_dim, heads_num, ffn_dim, dropout) for _ in range(layers_num)])
-        self.bert_pooler = BertPooler(model_dim, dropout)
-        self.bert_masked = BertForMLMPreditionHead(vocab_size model_dim)
+        self.bert_pooler = BertPooler(model_dim)
+        self.bert_masked = BertForMLMPreditionHead(model_dim)
         # NSP 的分类任务
         self.dense_classifier = nn.Linear(model_dim, 2)
         # MLM 的分类任务
