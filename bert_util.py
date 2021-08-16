@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 import math
 
+
 # padding mask
 def padding_mask(seq_q, seq_k):
-    batch_szie, q_len = seq_q.size()
+    batch_size, q_len = seq_q.size()
     mask = seq_k.data.eq(0)
-    mask = mask.unsqueeze(1).expand(-1, q_len, -1)
+    mask = mask.unsqueeze(1).expand(batch_size, q_len, -1)
     return mask
 
 def gelu(x):
@@ -117,12 +118,13 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+
 class BertForMLMPreditionHead(nn.Module):
     
     def __init__(self,model_dim=768):
         super(BertForMLMPreditionHead, self).__init__()
         self.dense = nn.Linear(model_dim, model_dim)
-        self.activation = gelu
+        self.activation = gelu #  input * 0.5 * (1 + input / torch.erf(math.sqrt(2)))
     
     def forward(self, encoder_output, masked_pos):
         model_dim = encoder_output.size(-1)
@@ -146,6 +148,12 @@ class BERT(nn.Module):
         self.dense_lm = nn.Linear(model_dim, vocab_size, bias=False)
     
     def forward(self, input_ids, segment_ids, masked_pos):
+        """
+        encoder_layers 的输出 elemnet-wise 的embedding：
+            (1) NSP 任务：选择 [CLS] 的embedding，经过一层线性映射（增加一层参数）从而得到训练好的训练的包含整句的表征。在进行线性分类。而且这里用的激活函数是 tanh
+            (2) MLM 任务：选择 选择 所有的tokens的embedding，通过经过一层线性映射（增加一层训练），然后经过 pos_masked 去选择被MASKED 位置的embedding，然后线性分类。
+            注意（这里激活函数是 gelu）；同时 pos_masked 值得是被选中MASK的位置，而不是padding的位置。
+        """
         output = self.embedding(input_ids, segment_ids)
         attn_mask = padding_mask(input_ids, input_ids)
         for encoder_layer in self.encoder_layers:
